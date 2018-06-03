@@ -1,13 +1,4 @@
-%%%-------------------------------------------------------------------
-%%% @author nick
-%%% @copyright (C) 2018, <COMPANY>
-%%% @doc
-%%%
-%%% @end
-%%% Created : 26. May 2018 5:11 PM
-%%%-------------------------------------------------------------------
 -module(meta_store).
--author("nick").
 
 -behaviour(gen_server).
 
@@ -22,119 +13,71 @@
   terminate/2,
   code_change/3]).
 
+-export([
+  write/2,
+  write_to_peers/4,
+  get_all_chunk_entries/0
+]).
+
 -define(SERVER, ?MODULE).
 
--record(state, {}).
+-record(state, {
+  table :: dets:tab_name()
+}).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
 
-%%--------------------------------------------------------------------
-%% @doc
-%% Starts the server
-%%
-%% @end
-%%--------------------------------------------------------------------
 -spec(start_link() ->
   {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 start_link() ->
   gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+-spec write_to_peers(Filename :: string(), ChunkName :: es3_chunk:chunk_name(), Checksum :: integer(), Location :: node()) -> ok.
+write_to_peers(Filename, ChunkName, Checksum, Location) ->
+  gen_server:multi_call(es3_master_server:peers(), meta_store, {write, ChunkName, Filename, Checksum, Location}).
+
+
+%% @doc
+%% Return a list of unique chunks that the current node knows about, we can use this to rebuild state of other nodes,
+%% perform naive node repairs later if we need to - or present data via the REST API if needed
+%% @end
+-spec get_all_chunk_entries() -> sets:new() | {error, term()}.
+get_all_chunk_entries() ->
+  dets:foldl(fun({Filename, Index, _Checksum}, Acc) ->
+                gb_sets:add({Filename, Index}, Acc)
+             end, gb_sets:new(), metadata).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Initializes the server
-%%
-%% @spec init(Args) -> {ok, State} |
-%%                     {ok, State, Timeout} |
-%%                     ignore |
-%%                     {stop, Reason}
-%% @end
-%%--------------------------------------------------------------------
--spec(init(Args :: term()) ->
-  {ok, State :: #state{}} | {ok, State :: #state{}, timeout() | hibernate} |
-  {stop, Reason :: term()} | ignore).
 init([]) ->
-  {ok, #state{}}.
+  case dets:open_file(metadata, []) of
+    {ok, DHandle} ->
+      {ok, #state{table = DHandle}};
+    {error, _Reason} = E ->
+      io:format("Unable to open database file: ~p~n", [E]),
+      ignore
+  end.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Handling call messages
-%%
-%% @end
-%%--------------------------------------------------------------------
--spec(handle_call(Request :: term(), From :: {pid(), Tag :: term()},
-    State :: #state{}) ->
-  {reply, Reply :: term(), NewState :: #state{}} |
-  {reply, Reply :: term(), NewState :: #state{}, timeout() | hibernate} |
-  {noreply, NewState :: #state{}} |
-  {noreply, NewState :: #state{}, timeout() | hibernate} |
-  {stop, Reason :: term(), Reply :: term(), NewState :: #state{}} |
-  {stop, Reason :: term(), NewState :: #state{}}).
+handle_call({write, ChunkKey, Filename, Checksum, Node}, _From, State = #state{table = Table}) ->
+  ok = dets:insert(Table, {ChunkKey, Filename, Checksum, Node}),
+  {reply, ok, State};
 handle_call(_Request, _From, State) ->
   {reply, ok, State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Handling cast messages
-%%
-%% @end
-%%--------------------------------------------------------------------
--spec(handle_cast(Request :: term(), State :: #state{}) ->
-  {noreply, NewState :: #state{}} |
-  {noreply, NewState :: #state{}, timeout() | hibernate} |
-  {stop, Reason :: term(), NewState :: #state{}}).
 handle_cast(_Request, State) ->
   {noreply, State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Handling all non call/cast messages
-%%
-%% @spec handle_info(Info, State) -> {noreply, State} |
-%%                                   {noreply, State, Timeout} |
-%%                                   {stop, Reason, State}
-%% @end
-%%--------------------------------------------------------------------
--spec(handle_info(Info :: timeout() | term(), State :: #state{}) ->
-  {noreply, NewState :: #state{}} |
-  {noreply, NewState :: #state{}, timeout() | hibernate} |
-  {stop, Reason :: term(), NewState :: #state{}}).
 handle_info(_Info, State) ->
   {noreply, State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% This function is called by a gen_server when it is about to
-%% terminate. It should be the opposite of Module:init/1 and do any
-%% necessary cleaning up. When it returns, the gen_server terminates
-%% with Reason. The return value is ignored.
-%%
-%% @spec terminate(Reason, State) -> void()
-%% @end
-%%--------------------------------------------------------------------
--spec(terminate(Reason :: (normal | shutdown | {shutdown, term()} | term()),
-    State :: #state{}) -> term()).
-terminate(_Reason, _State) ->
+terminate(_Reason, #state{table = DetsTab}) ->
+  dets:close(DetsTab),
   ok.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Convert process state when code is changed
-%%
-%% @spec code_change(OldVsn, State, Extra) -> {ok, NewState}
-%% @end
-%%--------------------------------------------------------------------
 -spec(code_change(OldVsn :: term() | {down, term()}, State :: #state{},
     Extra :: term()) ->
   {ok, NewState :: #state{}} | {error, Reason :: term()}).
@@ -144,3 +87,7 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+-spec write(binary(), list()) -> ok.
+write(ChunkKey, Filename) ->
+  gen_server:call(?MODULE, {write, ChunkKey, Filename, node()}).

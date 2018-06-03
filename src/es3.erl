@@ -1,13 +1,40 @@
-%%%-------------------------------------------------------------------
-%%% @author nick
-%%% @copyright (C) 2018, <COMPANY>
-%%% @doc
-%%%
-%%% @end
-%%% Created : 26. May 2018 4:55 PM
-%%%-------------------------------------------------------------------
 -module(es3).
--author("nick").
 
 %% API
--export([]).
+-export([
+  write/2,
+  read/1,
+  delete/1
+]).
+
+-spec write(Name, Object) -> Res when
+  Name :: iodata(),
+  Object :: binary(),
+  Res :: ok | {error, Reason :: any()}.
+
+write(Name, Object) ->
+  ok.
+
+-spec read(Name) -> Object when
+  Name :: iodata(),
+  Object :: binary() | {error, Reason :: any()}.
+read(Name) ->
+  <<"">>.
+
+-spec delete(Name) -> Res when
+  Name :: iodata(),
+  Res :: ok | {error, Reason :: any()}.
+delete(Name) ->
+  ok.
+
+
+%% ----------------------------------
+%% Unit tests
+%% ----------------------------------
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+
+
+-endif.

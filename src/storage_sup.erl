@@ -1,13 +1,26 @@
-%%%-------------------------------------------------------------------
-%%% @author nick
-%%% @copyright (C) 2018, <COMPANY>
 %%% @doc
-%%%
+%%% Supervisor for meta_store and the writer + reader fsm supervisors
 %%% @end
-%%% Created : 26. May 2018 5:19 PM
-%%%-------------------------------------------------------------------
 -module(storage_sup).
--author("nick").
+
+-behavior(supervisor).
 
 %% API
--export([]).
+-export([
+  start_link/0,
+  init/1
+]).
+
+start_link() ->
+  supervisor:start_link(?MODULE, []).
+
+-spec init(_Args :: term()) -> {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
+init(_Args) ->
+  SupFlags = #{strategy => one_for_one, intensity => 1, period => 5},
+	Children = [
+    #{
+      id => meta_store,
+      start => {meta_store, start_link, []}
+    }
+  ],
+  {ok, {SupFlags, Children}}.

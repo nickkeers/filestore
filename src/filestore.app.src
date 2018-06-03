@@ -1,0 +1,16 @@
+{application, filestore,
+ [{description, "A simple Amazon S3 clone"},
+  {vsn, "0.1.0"},
+  {registered, []},
+  {mod, { filestore_app, []}},
+  {applications,
+   [kernel,
+    stdlib
+   ]},
+  {env,[]},
+  {modules, []},
+
+  {maintainers, []},
+  {licenses, ["Apache 2.0"]},
+  {links, []}
+ ]}.

@@ -1,13 +1,11 @@
-%%%-------------------------------------------------------------------
-%%% @author nick
-%%% @copyright (C) 2018, <COMPANY>
-%%% @doc
-%%%
-%%% @end
-%%% Created : 03. Jun 2018 8:52 PM
-%%%-------------------------------------------------------------------
+%% @doc
+%% Simple logger to log files via disk_log
+%% @end
 -module(es3_log).
 -author("nick").
 
 %% API
 -export([]).
+
+new() ->
+  ok.
