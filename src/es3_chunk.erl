@@ -16,19 +16,19 @@
 -export_type([chunk_name/0]).
 
 -spec write(Key :: any(), Chunk :: binary()) -> ok | {error, Reason :: any()}.
-write(Key, Chunk) ->
-  ok.
+write({Filename, ChunkIndex}, Chunk) ->
+  Checksum = checksum(Chunk),
+  store:write(Filename, ChunkIndex, Chunk, Checksum).
 
 
 -spec read(Key :: any()) -> Chunk :: binary() | {error, Reason :: any()}.
 read(Key) ->
-  <<"">>.
+  store:read(Key).
 
 
 -spec delete(Key :: any()) -> ok | {error, Reason :: any()}.
 delete(Key) ->
-  ok.
-
+  store:delete(Key).
 
 -spec checksum(Chunk :: binary()) -> integer().
 checksum(Chunk) ->
