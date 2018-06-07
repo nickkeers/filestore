@@ -4,7 +4,8 @@
 -export([
     write/2,
     read/1,
-    delete/1
+    delete/1,
+    chunk_binary/1
 ]).
 
 -define(TIMEOUT, 10000).
@@ -18,48 +19,44 @@ write(Name, Data) ->
     % to save us reversing a potentially large list
     Chunked = chunk_binary(Data),
     ChunkListLength = length(Chunked),
-    Peers = es3_master_server:peers(),
+    Peers = nodes(),
     RepeatedNodes = repeat(Peers, length(Chunked)),
-
 
     %% Gives us a list of [{Idx, Chunk, Checksum}..{IdxN, ChunkN, ChecksumN}]
     IndexedChunks = lists:zip3(lists:seq(ChunkListLength, 1, -1), Chunked, RepeatedNodes),
 
-
-    case gen_tcp:connect("127.0.0.1", Port, [binary]) of
-        {ok, Socket} ->
-            lists:foreach(fun({Index, Chunk, Node}) ->
-                              Checksum = es3_chunk:checksum(Chunk),
-                              Entry = {{Name, Index}, Chunk, Checksum},
-                              gen_tcp:send(Socket, term_to_binary(Entry))
-                          end, IndexedChunks),
-            ok;
-        {error, _Reason} = ER ->
-            ER
-    end.
+    lists:foreach(fun({Index, Chunk, Node}) ->
+                      Checksum = es3_chunk:checksum(Chunk),
+                      rpc:call(Node, store, write, [Name, Index, Chunk, Checksum])
+                  end, IndexedChunks),
+    ok.
 
 repeat(L, N) when length(L) < N ->
     repeat(L, N-length(L), L);
-repeat(L, N) ->
+repeat(L, _N) ->
     L.
 
 repeat(_, 0, Acc) ->
     Acc;
 repeat([H | T], N, Acc) ->
-    repeat(T, N-1, [H|Acc]).
+    repeat(T ++ [H], N-1, [H|Acc]).
 
 -spec read(Name) -> Object when
     Name :: iodata(),
     Object :: binary() | {error, Reason :: any()}.
 read(Name) ->
-    {ok, Pid} = file_reader_sup:start_reader(Name),
-    <<"">>.
+    Self = self(),
+    {ok, _Pid} = file_reader_sup:start_reader(Name, Self),
+    receive
+        {results, Results} -> Results;
+        {error, Rsn} -> {error, Rsn}
+    end.
 
 -spec delete(Name) -> Res when
     Name :: iodata(),
     Res :: ok | {error, Reason :: any()}.
 delete(Name) ->
-    ok.
+    store:delete(Name).
 
 -spec chunk_binary(binary()) -> [binary()].
 chunk_binary(Data) ->

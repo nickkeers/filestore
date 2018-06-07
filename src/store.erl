@@ -15,17 +15,22 @@
 
 -export([
     write/4,
-    write_to_peers/5,
+    write_to_peers/4,
     get_all_chunk_entries/0,
     read/1,
+    read_chunk/1,
     delete/1,
-    entries_for_filename/1
+    entries_for_filename/1,
+    reset/0
 ]).
 
 -define(SERVER, ?MODULE).
+-define(MATCH_SPEC(Name), [{{{'$1', '$2'}, '_'}, [{'==', '$1', Name}], [{{'$1', '$2'}}]}]).
+-define(DELETE_SPEC(Name), [{{{'$1', '_'}, '_'}, [{'==', '$1', Name}], [true]}]).
 
 -record(state, {
-    table :: dets:tab_name()
+    meta_tab :: dets:tab_name(),
+    chunk_tab :: dets:tab_name()
 }).
 
 %%%===================================================================
@@ -37,9 +42,9 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
--spec write_to_peers(Filename :: iodata(), ChunkIndex :: integer(), Chunk :: binary(), Checksum :: integer(), Location :: node()) -> ok.
-write_to_peers(Filename, ChunkIndex, Chunk, Checksum, Location) ->
-    gen_server:multi_call(es3_master_server:peers(), meta_store, {write, ChunkIndex, Filename, Chunk, Checksum, Location}).
+-spec write_to_peers(Filename :: iodata(), ChunkIndex :: integer(), Chunk :: binary(), Checksum :: integer()) -> ok.
+write_to_peers(Filename, ChunkIndex, Chunk, Checksum) ->
+    gen_server:multi_call(nodes(), store, {write, ChunkIndex, Filename, Chunk, Checksum}).
 
 
 %% @doc
@@ -48,57 +53,82 @@ write_to_peers(Filename, ChunkIndex, Chunk, Checksum, Location) ->
 %% @end
 -spec get_all_chunk_entries() -> sets:new() | {error, term()}.
 get_all_chunk_entries() ->
-    dets:foldl(fun({{Filename, Index}, _Chunk, _Checksum, _Node}, Acc) ->
+    dets:foldl(fun({{Filename, Index}, _Checksum, _Node}, Acc) ->
         gb_sets:add({Filename, Index}, Acc)
-               end, gb_sets:new(), metadata).
+               end, gb_sets:new(), store).
 
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 
 init([]) ->
+    erlang:send_after(5000, self(), connect),
     case dets:open_file(store, []) of
         {ok, DHandle} ->
-            {ok, #state{table = DHandle}};
+            case dets:open_file(chunks, []) of
+                {ok, ChunkHandle} ->
+                    {ok, #state{meta_tab = DHandle, chunk_tab = ChunkHandle}};
+                {error, _} = E ->
+                    io:format("Couldn't open chunks table, error: ~p~n", [E]),
+                    exit(1)
+            end;
         {error, _Reason} = E ->
             io:format("Unable to open database file: ~p~n", [E]),
             ignore
     end.
 
-handle_call({write, Filename, ChunkIndex, Chunk, Checksum, Node}, _From, State = #state{table = Table}) ->
-    ok = dets:insert(Table, {{Filename, ChunkIndex}, Chunk, Checksum, Node}),
+handle_call({write, Filename, ChunkIndex, Chunk, Checksum}, _From, State = #state{meta_tab = Table, chunk_tab = ChunkTab}) ->
+    ok = dets:insert(Table, {{Filename, ChunkIndex}, Checksum}),
+    ok = dets:insert(ChunkTab, {{Filename, ChunkIndex}, Chunk}),
     {reply, ok, State};
-handle_call({read, Filename, ChunkIndex}, _From, State = #state{table = Table}) ->
+%% Read a metdata entry
+handle_call({read, Filename, ChunkIndex}, _From, State = #state{meta_tab = Table}) ->
     Reply =
         case dets:lookup({Filename, ChunkIndex}, Table) of
-            [{{Filename, ChunkIndex}, _Checksum, _Node} = Row] ->
+            [{{Filename, ChunkIndex}, _Checksum} = Row] ->
                 Row;
             _ ->
                 {error, no_such_entry}
         end,
     {reply, Reply, State};
-handle_call({entries, Filename}, _From, State = #state{table = Table}) ->
+handle_call({read_chunk, Key}, _From, State = #state{chunk_tab = Table}) ->
+    Result = case dets:lookup(Table, Key) of
+                 [{_, Chunk}] -> Chunk;
+                 {error, _} = ER-> ER
+             end,
+    {reply, Result, State};
+handle_call({entries, Filename}, _From, State = #state{meta_tab = Table}) ->
     Reply =
-        case dets:select(Table, [{{{'$1', '_'}, '_', '_', '_'}, [{'==', '$1', Filename}], ['$_']}]) of
+        case dets:select(Table, ?MATCH_SPEC(Filename)) of
             {error, _Reason} = Error ->
                 Error;
             Selection ->
                 Selection
         end,
     {reply, Reply, State};
-handle_call({delete, Key}, _From, State = #state{table = Table}) ->
-    Reply = dets:delete(Table, Key),
-    {reply, Reply, State};
+handle_call({delete, Name}, _From, State = #state{meta_tab = Table, chunk_tab = ChunkTab}) ->
+    _ = dets:select_delete(Table, ?DELETE_SPEC(Name)),
+    _ = dets:select_delete(ChunkTab, ?DELETE_SPEC(Name)),
+    {reply, ok, State};
+handle_call(reset, _From, State = #state{meta_tab = MetaTab, chunk_tab = ChunkTab}) ->
+    dets:delete_all_objects(MetaTab),
+    dets:delete_all_objects(ChunkTab),
+    {reply, ok, State};
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
 handle_cast(_Request, State) ->
     {noreply, State}.
 
+handle_info(connect, State) ->
+    {ok, NumNodes} = application:get_env(filestore, num_nodes),
+    [ net_adm:ping(node_name_for(N)) || N <- lists:seq(1, NumNodes) ],
+    erlang:send_after(5000, self(), connect),
+    {noreply, State};
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(_Reason, #state{table = DetsTab}) ->
+terminate(_Reason, #state{meta_tab = DetsTab}) ->
     dets:close(DetsTab),
     ok.
 
@@ -107,6 +137,11 @@ terminate(_Reason, #state{table = DetsTab}) ->
     {ok, NewState :: #state{}} | {error, Reason :: term()}).
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+-spec node_name_for(N :: integer()) -> atom().
+node_name_for(N) ->
+    {ok, Host} = inet:gethostname(),
+    list_to_atom("es3_" ++ integer_to_list(N) ++ "@" ++ Host).
 
 %%%===================================================================
 %%% Internal functions
@@ -119,7 +154,7 @@ code_change(_OldVsn, State, _Extra) ->
 %% @end
 -spec write(Filename :: iodata(), ChunkIndex :: integer(), Chunk :: binary(), Checksum :: integer()) -> ok.
 write(Filename, ChunkIndex, Chunk, Checksum) ->
-    gen_server:call(?MODULE, {write, Filename, ChunkIndex, Chunk, Checksum, node()}).
+    gen_server:call(?MODULE, {write, Filename, ChunkIndex, Chunk, Checksum}).
 
 %% @doc
 %% Read a single entry for a filename and the given chunk index
@@ -128,6 +163,10 @@ write(Filename, ChunkIndex, Chunk, Checksum) ->
 read({Filename, ChunkIndex}) ->
     gen_server:call(?MODULE, {read, Filename, ChunkIndex}).
 
+-spec read_chunk({iodata(), integer()}) -> row() | {error, term()}.
+read_chunk(Key) ->
+    gen_server:call(?MODULE, {read_chunk, Key}).
+
 %% @doc
 %% Return all the entries in the store for the given filename
 %% @end
@@ -135,6 +174,10 @@ read({Filename, ChunkIndex}) ->
 entries_for_filename(Filename) ->
     gen_server:call(?MODULE, {entries, Filename}).
 
--spec delete(Key :: {iodata(), integer()}) -> ok | {error, term()}.
-delete(Key = {_Filename, _ChunkIndex}) ->
+-spec delete(Key :: iodata()) -> ok | {error, term()}.
+delete(Key) ->
     gen_server:call(?MODULE, {delete, Key}).
+
+-spec reset() -> ok.
+reset() ->
+    gen_server:call(?MODULE, reset).

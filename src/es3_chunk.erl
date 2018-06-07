@@ -23,7 +23,7 @@ write({Filename, ChunkIndex}, Chunk) ->
 
 -spec read(Key :: any()) -> Chunk :: binary() | {error, Reason :: any()}.
 read(Key) ->
-  store:read(Key).
+  store:read_chunk(Key).
 
 
 -spec delete(Key :: any()) -> ok | {error, Reason :: any()}.

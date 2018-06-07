@@ -13,11 +13,11 @@ AddConfigKey =
 %% this saves writing an auto-discovery feature that uses UDP (across machines) or using some external piece of software
 %% like Redis / ZooKeeper etc as a registry for node names
 NumNodes = proplists:get_value(num_nodes, CONFIG, 3),
-ShortNodeNames = [ list_to_atom("es3_" ++ integer_to_list(N)) || N <- lists:seq(1, NumNodes) ],
+%ShortNodeNames = [ list_to_atom("es3_" ++ integer_to_list(N)) || N <- lists:seq(1, NumNodes) ],
 
-Config2 = AddConfigKey(node_names, ShortNodeNames, CONFIG),
+%Config2 = AddConfigKey(node_names, ShortNodeNames, CONFIG),
 
-RelxConfig = proplists:get_value(relx, Config2),
+RelxConfig = proplists:get_value(relx, CONFIG),
 RelxConfig2 = proplists:delete(release, RelxConfig),
 FilestoreVersion = proplists:get_value(vsn, CONFIG, "0.0.1"),
 
@@ -27,4 +27,4 @@ ReleaseConfig = lists:foldl(fun(Index, Acc) ->
 
 RelxConfig3 = lists:reverse(ReleaseConfig) ++ RelxConfig2,
 
-lists:keyreplace(relx, 1, Config2, {relx, RelxConfig3}).
+lists:keyreplace(relx, 1, CONFIG, {relx, RelxConfig3}).

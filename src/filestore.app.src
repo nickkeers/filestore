@@ -5,7 +5,8 @@
   {mod, { filestore_app, []}},
   {applications,
    [kernel,
-    stdlib
+    stdlib,
+    crypto
    ]},
   {env,[]},
   {modules, []},
