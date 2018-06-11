@@ -12,9 +12,6 @@
   checksum/1
 ]).
 
--type chunk_name() :: {integer(), integer()}. % {Index, Checksum}.
--export_type([chunk_name/0]).
-
 -spec write(Key :: any(), Chunk :: binary()) -> ok | {error, Reason :: any()}.
 write({Filename, ChunkIndex}, Chunk) ->
   Checksum = checksum(Chunk),
@@ -33,15 +30,3 @@ delete(Key) ->
 -spec checksum(Chunk :: binary()) -> integer().
 checksum(Chunk) ->
   erlang:crc32(Chunk).
-
-
-%% ----------------------------------
-%% Unit tests
-%% ----------------------------------
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
-
-
-
--endif.

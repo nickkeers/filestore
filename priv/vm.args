@@ -1,3 +1,3 @@
 -sname ${NODE_NAME}
 -setcookie filestore_es3
--filestore port_start ${PORT_START}
+-filestore port_start ${PORT_START} ${REST_PORT}

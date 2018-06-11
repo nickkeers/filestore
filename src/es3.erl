@@ -18,28 +18,42 @@ write(Name, Data) ->
     % This gives us a list of chunks in reverse order, so we can be crafty and label our chunks in descending order
     % to save us reversing a potentially large list
     Chunked = chunk_binary(Data),
-    ChunkListLength = length(Chunked),
+    ChunkListIndexes = lists:seq(length(Chunked), 1, -1),
     Peers = nodes(),
-    RepeatedNodes = repeat(Peers, length(Chunked)),
 
-    %% Gives us a list of [{Idx, Chunk, Checksum}..{IdxN, ChunkN, ChecksumN}]
-    IndexedChunks = lists:zip3(lists:seq(ChunkListLength, 1, -1), Chunked, RepeatedNodes),
+    case Peers of
+        [] ->
+            IndexedChunksLocal = lists:zip(ChunkListIndexes, Chunked),
+            perform_local_writes(Name, IndexedChunksLocal);
+        Nodes ->
+            RepeatedNodes = repeat(Nodes, length(Chunked)),
 
-    lists:foreach(fun({Index, Chunk, Node}) ->
-                      Checksum = es3_chunk:checksum(Chunk),
-                      rpc:call(Node, store, write, [Name, Index, Chunk, Checksum])
-                  end, IndexedChunks),
-    ok.
+            %% Gives us a list of [{Idx, Chunk, Checksum}..{IdxN, ChunkN, ChecksumN}]
+            IndexedChunks = lists:zip3(ChunkListIndexes, Chunked, RepeatedNodes),
+            perform_remote_writes(Name, IndexedChunks)
+    end.
 
-repeat(L, N) when length(L) < N ->
-    repeat(L, N-length(L), L);
-repeat(L, _N) ->
-    L.
+perform_local_writes(_Name, []) ->
+    ok;
+perform_local_writes(Name, [{Index, Chunk} | T]) ->
+    case store:write(Name, Index, Chunk, es3_chunk:checksum(Chunk)) of
+        ok ->
+            perform_local_writes(Name, T);
+        {error, _} = ER ->
+            ER
+    end.
 
-repeat(_, 0, Acc) ->
-    Acc;
-repeat([H | T], N, Acc) ->
-    repeat(T ++ [H], N-1, [H|Acc]).
+perform_remote_writes(_Name, []) ->
+    ok;
+perform_remote_writes(Name, [{Index, Chunk, Node} | T]) ->
+    Checksum = es3_chunk:checksum(Chunk),
+    Ret = rpc:call(Node, store, write, [Name, Index, Chunk, Checksum]),
+    case Ret of
+        {error, _} = ER ->
+            ER;
+        ok ->
+            perform_remote_writes(Name, T)
+    end.
 
 -spec read(Name) -> Object when
     Name :: iodata(),
@@ -63,6 +77,7 @@ chunk_binary(Data) ->
     ChunkSize = application:get_env(filestore, chunk_size, 1000000),
     chunk_binary(Data, ChunkSize, []).
 
+-spec chunk_binary(binary(), non_neg_integer(), [binary()]) -> [binary()].
 chunk_binary(<<>>, _, Acc) ->
     Acc;
 chunk_binary(Data, ChunkSize, Acc) ->
@@ -72,3 +87,15 @@ chunk_binary(Data, ChunkSize, Acc) ->
         RemainingChunk ->
             chunk_binary(<<>>, ChunkSize, [binary:copy(RemainingChunk) | Acc])
     end.
+
+-spec repeat([any()], non_neg_integer()) -> [any()].
+repeat(L, N) when length(L) < N ->
+    repeat(L, N-length(L), L);
+repeat(L, _N) ->
+    L.
+
+-spec repeat([any()], non_neg_integer(), [any()]) -> [any()].
+repeat(_, 0, Acc) ->
+    Acc;
+repeat([H | T], N, Acc) ->
+    repeat(T ++ [H], N-1, [H|Acc]).

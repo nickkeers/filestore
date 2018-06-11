@@ -41,5 +41,6 @@ init([]) ->
 
   {ok, {SupFlags, [Child]}}.
 
+-spec start_reader(iodata(), pid()) -> {'ok','undefined' | pid()} | {'ok','undefined' | pid(), term()}.
 start_reader(Filename, Parent) ->
   supervisor:start_child(?SERVER, [Filename, Parent]).

@@ -7,36 +7,27 @@
     read_node_chunks/3
 ]).
 
+-spec start_link(iodata(), pid()) -> {'ok', pid()} | {'error', term()}.
 start_link(Filename, Parent) ->
     Self = self(),
     proc_lib:start_link(?MODULE, reader, [Filename, Parent, Self]).
 
+-spec reader(iodata(), pid(), pid()) -> ok.
 reader(Filename, Parent, Self) ->
     ThisPid = self(),
     proc_lib:init_ack(Self, {ok, ThisPid}),
-    Peers = nodes(),
 
-    % Gives list of [{Node, [Key = {Filename, ChunkIndex}]]
-    Metadata = lists:map(fun(Node) ->
-        Entries =
-            case gen_server:call({store, Node}, {entries, Filename}) of
-                {error, _Reason} ->
-                    io:format("Couldn't fetch chunk on node ~p for ~p~n", [Node, Filename]),
-                    {error, {no_chunk, Node, Filename}};
-                Entries2 ->
-                    Entries2
-            end,
-        {Node, Entries}
-                         end, Peers),
+    Metadata = store:all_entries_for_filename(Filename),
 
     HowMany = lists:foldl(fun({_Node, Entries}, Acc) -> Acc + length(Entries) end, 0, Metadata),
 
     [spawn(?MODULE, read_node_chunks, [ThisPid, Node, Key]) || {Node, Key} <- Metadata],
 
     Results = wait_for_results(0, HowMany, []),
-    Parent ! reassemble(Results).
+    Parent ! reassemble(Results),
+    ok.
 
--spec read_node_chunks(pid(), node(), [{iodata(), integer()}]) -> ok.
+-spec read_node_chunks(pid(), node(), [{iodata(), non_neg_integer()}]) -> ok.
 read_node_chunks(Collector, _, {error, Rsn} = ER) ->
     io:format("Error reading chunk: ~p~n", [Rsn]),
     Collector ! ER;
@@ -46,6 +37,7 @@ read_node_chunks(CollectorPid, Node, Keys) ->
         CollectorPid ! {chunk, {Key, Chunk}}
     end, Keys).
 
+-spec wait_for_results(non_neg_integer(),number(),[{{iodata(), non_neg_integer()}, binary()}]) -> [{iodata(), non_neg_integer()}] | {'error','missing_chunk' | 'timeout'}.
 wait_for_results(Collected, Total, Acc) when Collected == Total ->
     Acc;
 wait_for_results(Collected, Total, Acc) ->
@@ -58,6 +50,7 @@ wait_for_results(Collected, Total, Acc) ->
         {error, timeout}
     end.
 
+-spec reassemble([{binary() | maybe_improper_list(iodata(),binary() | []),non_neg_integer()}] | {'error','missing_chunk' | 'timeout'}) -> {'error','missing_chunk' | 'timeout'} | {'results',<<>>}.
 reassemble({error, Reason}) ->
     {error, Reason};
 reassemble(Chunks) ->
