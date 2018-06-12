@@ -52,11 +52,14 @@ write_to_peers(Filename, ChunkIndex, Chunk, Checksum) ->
 %% Return a list of unique chunks that the current node knows about, we can use this to rebuild state of other nodes,
 %% perform naive node repairs later if we need to - or present data via the REST API if needed
 %% @end
--spec get_all_chunk_entries() -> sets:set() | {error, term()}.
+-spec get_all_chunk_entries() -> map() | {error, term()}.
 get_all_chunk_entries() ->
-    dets:foldl(fun({{Filename, Index}, _Checksum, _Node}, Acc) ->
-        gb_sets:add({Filename, Index}, Acc)
-               end, gb_sets:new(), store).
+    dets:foldl(fun({{Filename, Index}, Checksum}, Acc) ->
+        maps:update_with(Filename,
+            fun(Indexes) ->
+                maps:put(Index, #{checksum => Checksum}, Indexes)
+            end, #{Index => #{checksum => Checksum}}, Acc)
+    end, #{}, store).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -109,7 +112,7 @@ handle_call({read, Filename, ChunkIndex}, _From, State = #state{meta_tab = Table
 handle_call({read_chunk, Key}, _From, State = #state{chunk_tab = Table}) ->
     Result = case dets:lookup(Table, Key) of
                  [{_, Chunk}] -> Chunk;
-                 {error, _} = ER-> ER
+                 {error, _} = ER -> ER
              end,
     {reply, Result, State};
 %% Returns all entries in the metadata table for Filename
@@ -139,7 +142,7 @@ handle_cast(_Request, State) ->
 
 handle_info(connect, State) ->
     {ok, NumNodes} = application:get_env(filestore, num_nodes),
-    [ net_adm:ping(node_name_for(N)) || N <- lists:seq(1, NumNodes) ],
+    [net_adm:ping(node_name_for(N)) || N <- lists:seq(1, NumNodes)],
     erlang:send_after(5000, self(), connect),
     {noreply, State};
 handle_info(_Info, State) ->
@@ -164,7 +167,7 @@ node_name_for(N) ->
 %%% Internal functions
 %%%===================================================================
 
--type row() :: {{iodata(), integer()}, binary(), integer()}.
+-type metadata_row() :: {{iodata(), integer()}, integer()}.
 
 %% @doc
 %% Write a file chunk to the in-memory store
@@ -176,28 +179,28 @@ write(Filename, ChunkIndex, Chunk, Checksum) ->
 %% @doc
 %% Read a single entry for a filename and the given chunk index
 %% @end
--spec read({iodata(), integer()}) -> row() | {error, no_such_entry}.
+-spec read({iodata(), integer()}) -> metadata_row() | {error, no_such_entry}.
 read({Filename, ChunkIndex}) ->
     gen_server:call(?MODULE, {read, Filename, ChunkIndex}).
 
 %% @doc
 %% Read a single chunk from the chunks table, returns the row data for that chunk
 %% @end
--spec read_chunk({iodata(), integer()}) -> row() | {error, term()}.
+-spec read_chunk({iodata(), integer()}) -> metadata_row() | {error, term()}.
 read_chunk(Key) ->
     gen_server:call(?MODULE, {read_chunk, Key}).
 
 %% @doc
 %% Return all the entries in the store for the given filename
 %% @end
--spec entries_for_filename(iodata()) -> [row()] | {error, no_entries}.
+-spec entries_for_filename(iodata()) -> [metadata_row()] | {error, no_entries}.
 entries_for_filename(Filename) ->
     gen_server:call(?MODULE, {entries, Filename}).
 
 %% @doc
 %% Get all the metadata entries across the nodes in the cluster for a filename
 %% @end
--spec all_entries_for_filename(iodata()) -> [row()] | {error, no_entries}.
+-spec all_entries_for_filename(iodata()) -> [metadata_row()] | {error, no_entries}.
 all_entries_for_filename(Filename) ->
     Remote = lists:map(fun(Node) ->
         Entries =
@@ -208,7 +211,7 @@ all_entries_for_filename(Filename) ->
                     Entries2
             end,
         {Node, Entries}
-              end, nodes()),
+                       end, nodes()),
     case entries_for_filename(Filename) of
         {error, no_entries} ->
             Remote;

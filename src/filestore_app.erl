@@ -11,19 +11,18 @@
 
 -spec start(application:start_type(), term()) -> {ok, pid()} | {ok, pid(), term()} | {error, term()}.
 start(_StartType, _StartArgs) ->
-    {ok, RestPort} = application:get_env(filestore, rest_port),
+    RestPort = application:get_env(filestore, rest_port, 8100),
+
     Dispatch = cowboy_router:compile([
         {'_', [
             %% All files
-            {"/metadata", metadata_rest_handler, []},
-            %% Get metadata for a specific filename
-            {"/metadata/:filename", metadata_rest_handler, []},
-            % Get metdata for a file from a certain node
-            {"/metdata/:node/:filename", metadata_rest_handler, []},
+            {"/metadata", metadata_rest_handler, [get_meta]},
 
-            {"/all/files", metadata_rest_handler, []},
-            %
-            {"/all/files/:filename", file_rest_handler, []}
+            %% Get metadata for a specific filename
+            {"/metadata/:filename", metadata_rest_handler, [get_file]},
+
+            % Get a list of all files from all nodes
+            {"/metadata/:filename/all", metadata_rest_handler, [get_all_meta]}
         ]}
     ]),
 
