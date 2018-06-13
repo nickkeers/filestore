@@ -26,7 +26,7 @@
 ]).
 
 -define(SERVER, ?MODULE).
--define(MATCH_SPEC(Name), [{{{'$1', '$2'}, '_'}, [{'==', '$1', Name}], [{{'$1', '$2'}}]}]).
+-define(MATCH_SPEC(Name), [{{{'$1', '$2'}, '$3'}, [{'==', '$1', Name}], [{{{{'$1','$2'}},'$3'}}]}]).
 -define(DELETE_SPEC(Name), [{{{'$1', '_'}, '_'}, [{'==', '$1', Name}], [true]}]).
 
 -record(state, {
@@ -55,11 +55,12 @@ write_to_peers(Filename, ChunkIndex, Chunk, Checksum) ->
 -spec get_all_chunk_entries() -> map() | {error, term()}.
 get_all_chunk_entries() ->
     dets:foldl(fun({{Filename, Index}, Checksum}, Acc) ->
+        BIndex = integer_to_binary(Index),
         maps:update_with(Filename,
             fun(Indexes) ->
-                maps:put(Index, #{checksum => Checksum}, Indexes)
-            end, #{Index => #{checksum => Checksum}}, Acc)
-    end, #{}, store).
+                maps:put(BIndex, #{checksum => Checksum}, Indexes)
+            end, #{BIndex => #{checksum => Checksum}}, Acc)
+    end, #{}, metadata).
 
 %%%===================================================================
 %%% gen_server callbacks

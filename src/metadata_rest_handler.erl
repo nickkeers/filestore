@@ -27,28 +27,32 @@ do_route(Req, Op) ->
             get_meta -> get_metadata(Req);
             get_file -> get_file(Req);
             get_all_meta -> get_all_meta(Req);
-            _ -> {<<"No such route">>, Req, Op}
+            _ -> {jsone:encode(#{error => <<"No such route">>}), Req, Op}
         end,
     cowboy_req:reply(Code, ?JSON_HEADER, Body, Req2).
 
-%% ===============================
+%% ===========================================================================================
 
 -type entries_return() :: {binary(), cowboy_req:req(), integer()}.
 
 % /metadata
 -spec get_metadata(cowboy_req:req()) -> entries_return().
 get_metadata(Req) ->
-    Result = store:get_all_chunk_entries(),
-    encode_entries(Result, Req).
+    case store:get_all_chunk_entries() of
+        {error, _Reason} ->
+            {jsone:encode(#{error => <<"Error, no filename given">>}), Req, 404};
+        Result ->
+            Encoded = jsone:encode(Result),
+            {Encoded, Req, 200}
+    end.
 
 % /metadata/:filename
 -spec get_file(cowboy_req:req()) -> entries_return().
 get_file(Req) ->
     Filename = cowboy_req:binding(filename, Req),
-
     case Filename of
         undefined ->
-            {<<"Error, no filename given">>, Req, get_file};
+            {jsone:encode(#{error => <<"Error, no filename given">>}), Req, 404};
         _ ->
             % {{iodata(), integer()}, integer()}
             Result = store:entries_for_filename(Filename),
@@ -61,13 +65,15 @@ get_all_meta(Req) ->
     Filename = cowboy_req:binding(filename, Req),
     case Filename of
         undefined ->
-            {<<"Error, no entries for given filename">>, Req, 404};
+            {jsone:encode(#{error => <<"Error, no entries for given filename">>}), Req, 404};
         _ ->
             Result = store:all_entries_for_filename(Filename),
             encode_entries(Result, Req)
     end.
 
+%% ===========================================================================================
 %% Utilities
+%% ===========================================================================================
 
 -spec encode_entries({'error', term()} | list({iodata(), integer()}), cowboy_req:req()) -> {binary(), cowboy_req:req(), integer()}.
 encode_entries({error, _}, Req) ->
@@ -78,10 +84,11 @@ encode_entries({error, _}, Req) ->
 encode_entries(Entries, Req) ->
     Result =
         lists:foldl(fun({{Filename, Index}, Checksum}, Acc) ->
+            BIndex = integer_to_binary(Index),
             maps:update_with(Filename,
                 fun(Indexes) ->
-                    maps:put(Index, #{checksum => Checksum}, Indexes)
-                end, #{Index => #{checksum => Checksum}}, Acc)
+                    maps:put(BIndex, #{checksum => Checksum}, Indexes)
+                end, #{BIndex => #{checksum => Checksum}}, Acc)
                     end, #{}, Entries),
     Encoded = jsone:encode(Result),
     {Encoded, Req, 200}.
