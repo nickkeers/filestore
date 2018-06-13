@@ -1,0 +1,1 @@
+-define(JSON_HEADER, #{<<"Content-Type">> => <<"application/json">>}).

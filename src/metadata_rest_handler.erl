@@ -7,13 +7,9 @@
     do_route/2
 ]).
 
--define(GET, <<"GET">>).
--define(POST, <<"POST">>).
--define(PUT, <<"PUT">>).
--define(DELETE, <<"DELETE">>).
+-include("rest.hrl").
 
-init(Req, Opts) ->
-    [Op | _] = Opts,
+init(Req, Op) ->
     {cowboy_rest, Req, Op}.
 
 allowed_methods(Req, State) ->
@@ -26,22 +22,27 @@ content_types_provided(Req, State) ->
     ], Req, State}.
 
 do_route(Req, Op) ->
-    case Op of
-        get_meta -> get_metadata(Req);
-        get_file -> get_file(Req);
-        get_all_meta -> get_all_meta(Req);
-        _ -> {<<"No such route">>, Req, Op}
-    end.
+    {Body, Req2, Code} =
+        case Op of
+            get_meta -> get_metadata(Req);
+            get_file -> get_file(Req);
+            get_all_meta -> get_all_meta(Req);
+            _ -> {<<"No such route">>, Req, Op}
+        end,
+    cowboy_req:reply(Code, ?JSON_HEADER, Body, Req2).
 
 %% ===============================
 
+-type entries_return() :: {binary(), cowboy_req:req(), integer()}.
 
 % /metadata
+-spec get_metadata(cowboy_req:req()) -> entries_return().
 get_metadata(Req) ->
     Result = store:get_all_chunk_entries(),
-    encode_entries(Result, Req, get_metadata).
+    encode_entries(Result, Req).
 
 % /metadata/:filename
+-spec get_file(cowboy_req:req()) -> entries_return().
 get_file(Req) ->
     Filename = cowboy_req:binding(filename, Req),
 
@@ -51,37 +52,36 @@ get_file(Req) ->
         _ ->
             % {{iodata(), integer()}, integer()}
             Result = store:entries_for_filename(Filename),
-            encode_entries(Result, Req, get_file)
+            encode_entries(Result, Req)
     end.
 
-encode_entries({error, _}, Req, State) ->
+% /metadata/:filename/all - all entries across all nodes for a file
+-spec get_all_meta(Req :: cowboy_req:req()) -> entries_return().
+get_all_meta(Req) ->
+    Filename = cowboy_req:binding(filename, Req),
+    case Filename of
+        undefined ->
+            {<<"Error, no entries for given filename">>, Req, 404};
+        _ ->
+            Result = store:all_entries_for_filename(Filename),
+            encode_entries(Result, Req)
+    end.
+
+%% Utilities
+
+-spec encode_entries({'error', term()} | list({iodata(), integer()}), cowboy_req:req()) -> {binary(), cowboy_req:req(), integer()}.
+encode_entries({error, _}, Req) ->
     Encoded = jsone:encode(#{
         error => <<"Error, no entries for filename">>
     }),
-    {Encoded, Req, State};
-encode_entries(Entries, Req, State) ->
+    {Encoded, Req, 404};
+encode_entries(Entries, Req) ->
     Result =
         lists:foldl(fun({{Filename, Index}, Checksum}, Acc) ->
             maps:update_with(Filename,
                 fun(Indexes) ->
                     maps:put(Index, #{checksum => Checksum}, Indexes)
                 end, #{Index => #{checksum => Checksum}}, Acc)
-        end, #{}, Entries),
+                    end, #{}, Entries),
     Encoded = jsone:encode(Result),
-    {Encoded, Req, State}.
-
-node_and_filename(Node, Filename) when (Node == undefined) orelse (Filename == undefined) ->
-    undefined;
-node_and_filename(Node, Filename) ->
-    {Node, Filename}.
-
-% /metadata/:filename/all - all entries across all nodes for a file
-get_all_meta(Req) ->
-    Filename = cowboy_req:binding(filename, Req),
-    case Filename of
-        undefined ->
-            {<<"Error, no entries for given filename">>, Req, get_all_meta};
-        _ ->
-            Result = store:all_entries_for_filename(Filename),
-            encode_entries(Result, Req, get_metadata)
-    end.
+    {Encoded, Req, 200}.

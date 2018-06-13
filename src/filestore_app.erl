@@ -13,16 +13,15 @@
 start(_StartType, _StartArgs) ->
     RestPort = application:get_env(filestore, rest_port, 8100),
 
-    Dispatch = cowboy_router:compile([
-        {'_', [
+    Dispatch = cowboy_router:compile([{'_', [
             %% All files
-            {"/metadata", metadata_rest_handler, [get_meta]},
+            {"/metadata", metadata_rest_handler, get_meta},
 
             %% Get metadata for a specific filename
-            {"/metadata/:filename", metadata_rest_handler, [get_file]},
+            {"/metadata/:filename", metadata_rest_handler, get_file},
 
             % Get a list of all files from all nodes
-            {"/metadata/:filename/all", metadata_rest_handler, [get_all_meta]}
+            {"/metadata/:filename/all", metadata_rest_handler, get_all_meta}
         ]}
     ]),
 
