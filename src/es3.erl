@@ -33,6 +33,7 @@ write(Name, Data) ->
             perform_remote_writes(Name, IndexedChunks)
     end.
 
+-spec perform_local_writes(iodata(), [{integer(), binary()}]) -> 'ok' | {'error', term()}.
 perform_local_writes(_Name, []) ->
     ok;
 perform_local_writes(Name, [{Index, Chunk} | T]) ->
@@ -43,6 +44,7 @@ perform_local_writes(Name, [{Index, Chunk} | T]) ->
             ER
     end.
 
+-spec perform_remote_writes(iodata(), [{integer(), binary()}]) -> 'ok' | {'error', term()}.
 perform_remote_writes(_Name, []) ->
     ok;
 perform_remote_writes(Name, [{Index, Chunk, Node} | T]) ->
@@ -62,8 +64,10 @@ read(Name) ->
     Self = self(),
     {ok, _Pid} = file_reader_sup:start_reader(Name, Self),
     receive
-        {results, Results} -> Results;
-        {error, Rsn} -> {error, Rsn}
+        {results, Results} ->
+            Results;
+        {error, _Rsn} = Error ->
+            Error
     end.
 
 -spec delete(Name) -> Res when

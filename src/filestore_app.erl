@@ -15,8 +15,6 @@ start(_StartType, _StartArgs) ->
 
     Dispatch = cowboy_router:compile([
         {'_', [
-            {"/", metadata_rest_handler, []},
-
             %% All files
             {"/metadata", metadata_rest_handler, get_meta},
 

@@ -16,10 +16,13 @@ start_link(Filename, Parent) ->
 reader(Filename, Parent, Self) ->
     ThisPid = self(),
     proc_lib:init_ack(Self, {ok, ThisPid}),
-
     Metadata = store:all_entries_for_filename(Filename),
 
-    HowMany = lists:foldl(fun({_Node, Entries}, Acc) -> Acc + length(Entries) end, 0, Metadata),
+    HowMany = lists:foldl(fun({error, _}, Acc) ->
+                                 Acc;
+                             ({_Node, Entries}, Acc) ->
+                                 Acc + length(Entries)
+                          end, 0, Metadata),
 
     [spawn(?MODULE, read_node_chunks, [ThisPid, Node, Key]) || {Node, Key} <- Metadata],
 
@@ -50,7 +53,7 @@ wait_for_results(Collected, Total, Acc) ->
         {error, timeout}
     end.
 
--spec reassemble([{binary() | maybe_improper_list(iodata(),binary() | []),non_neg_integer()}] | {'error','missing_chunk' | 'timeout'}) -> {'error','missing_chunk' | 'timeout'} | {'results',<<>>}.
+-spec reassemble([{binary() | maybe_improper_list(iodata(),binary() | []), non_neg_integer()}] | {'error','missing_chunk' | 'timeout'}) -> {'error','missing_chunk' | 'timeout'} | {'results',<<>>}.
 reassemble({error, Reason}) ->
     {error, Reason};
 reassemble(Chunks) ->

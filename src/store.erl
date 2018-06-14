@@ -87,14 +87,18 @@ handle_call({write, Filename, ChunkIndex, Chunk, Checksum}, _From, State = #stat
     % function depends on the previous function running successfully - not writing a function here because it would only
     % be used here
     Return =
-        case dets:insert(Table, {{Filename, ChunkIndex}, Checksum}) of
-            ok ->
-                case dets:insert(ChunkTab, {{Filename, ChunkIndex}, Chunk}) of
-                    ok ->
+        case dets:insert_new(metadata, {{Filename, ChunkIndex}, Checksum}) of
+            true ->
+                case dets:insert_new(chunks, {{Filename, ChunkIndex}, Chunk}) of
+                    true ->
                         ok;
+                    false ->
+                        {error, exists};
                     {error, _Rsn} = ER ->
                         ER
                 end;
+            false ->
+                {error, exists};
             {error, _Rsn} = ER ->
                 ER
         end,
@@ -201,7 +205,7 @@ entries_for_filename(Filename) ->
 %% @doc
 %% Get all the metadata entries across the nodes in the cluster for a filename
 %% @end
--spec all_entries_for_filename(iodata()) -> [metadata_row()] | {error, no_entries}.
+-spec all_entries_for_filename(iodata()) -> [metadata_row()].
 all_entries_for_filename(Filename) ->
     Remote = lists:map(fun(Node) ->
         Entries =
@@ -233,7 +237,3 @@ delete(Key) ->
 -spec reset() -> ok.
 reset() ->
     gen_server:call(?MODULE, reset).
-
--spec exists(Key :: any()) -> boolean().
-exists(Key) ->
-    gen_server:call(?MODULE, {exists, Key}).
