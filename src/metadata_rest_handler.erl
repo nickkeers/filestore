@@ -9,50 +9,51 @@
 
 -include("rest.hrl").
 
+-spec init(Req :: cowboy_req:req(), Op :: atom()) -> {atom(), cowboy_req:req(), atom()}.
 init(Req, Op) ->
     {cowboy_rest, Req, Op}.
 
+-spec allowed_methods(Req :: cowboy_req:req(), State :: atom()) -> {[binary()], cowboy_req:req(), atom()}.
 allowed_methods(Req, State) ->
     Methods = [<<"GET">>],
     {Methods, Req, State}.
 
+-spec content_types_provided(Req :: cowboy_req:req(), State :: atom()) -> {[{binary(), atom()}], cowboy_req:req(), atom()}.
 content_types_provided(Req, State) ->
     {[
         {<<"application/json">>, do_route}
     ], Req, State}.
 
+-spec do_route(Req :: cowboy_req:req(), Op :: atom()) -> cowboy_req:req().
 do_route(Req, Op) ->
     {Body, Req2, Code} =
         case Op of
             get_meta -> get_metadata(Req);
             get_file -> get_file(Req);
             get_all_meta -> get_all_meta(Req);
-            _ -> {jsone:encode(#{error => <<"No such route">>}), Req, Op}
+            _ -> {?JSON_ERROR(<<"No such route">>), Req, Op}
         end,
-    cowboy_req:reply(Code, ?JSON_HEADER, Body, Req2).
+    cowboy_req:reply(Code, ?JSON_HEADER, jsone:encode(Body), Req2).
 
 %% ===========================================================================================
 
--type entries_return() :: {binary(), cowboy_req:req(), integer()}.
-
 % /metadata
--spec get_metadata(cowboy_req:req()) -> entries_return().
+-spec get_metadata(cowboy_req:req()) -> route_return().
 get_metadata(Req) ->
     case store:get_all_chunk_entries() of
         {error, _Reason} ->
-            {jsone:encode(#{error => <<"Error, no filename given">>}), Req, 404};
+            {?JSON_ERROR(<<"Error, no filename given">>), Req, 404};
         Result ->
-            Encoded = jsone:encode(Result),
-            {Encoded, Req, 200}
+            {Result, Req, 200}
     end.
 
 % /metadata/:filename
--spec get_file(cowboy_req:req()) -> entries_return().
+-spec get_file(cowboy_req:req()) -> route_return().
 get_file(Req) ->
     Filename = cowboy_req:binding(filename, Req),
     case Filename of
         undefined ->
-            {jsone:encode(#{error => <<"Error, no filename given">>}), Req, 404};
+            {?JSON_ERROR(<<"Error, no filename given">>), Req, 404};
         _ ->
             % {{iodata(), integer()}, integer()}
             Result = store:entries_for_filename(Filename),
@@ -60,12 +61,12 @@ get_file(Req) ->
     end.
 
 % /metadata/:filename/all - all entries across all nodes for a file
--spec get_all_meta(Req :: cowboy_req:req()) -> entries_return().
+-spec get_all_meta(Req :: cowboy_req:req()) -> route_return().
 get_all_meta(Req) ->
     Filename = cowboy_req:binding(filename, Req),
     case Filename of
         undefined ->
-            {jsone:encode(#{error => <<"Error, no entries for given filename">>}), Req, 404};
+            {?JSON_ERROR(<<"Error, no entries for given filename">>), Req, 404};
         _ ->
             Result = store:all_entries_for_filename(Filename),
             encode_entries(Result, Req)
@@ -75,12 +76,9 @@ get_all_meta(Req) ->
 %% Utilities
 %% ===========================================================================================
 
--spec encode_entries({'error', term()} | list({iodata(), integer()}), cowboy_req:req()) -> {binary(), cowboy_req:req(), integer()}.
+-spec encode_entries({'error', term()} | list({iodata(), integer()}), cowboy_req:req()) -> route_return().
 encode_entries({error, _}, Req) ->
-    Encoded = jsone:encode(#{
-        error => <<"Error, no entries for filename">>
-    }),
-    {Encoded, Req, 404};
+    {?JSON_ERROR(<<"Error, no entries for filename">>), Req, 404};
 encode_entries(Entries, Req) ->
     Result =
         lists:foldl(fun({{Filename, Index}, Checksum}, Acc) ->
@@ -90,5 +88,4 @@ encode_entries(Entries, Req) ->
                     maps:put(BIndex, #{checksum => Checksum}, Indexes)
                 end, #{BIndex => #{checksum => Checksum}}, Acc)
                     end, #{}, Entries),
-    Encoded = jsone:encode(Result),
-    {Encoded, Req, 200}.
+    {Result, Req, 200}.

@@ -30,10 +30,13 @@ start(_StartType, _StartArgs) ->
             %% File routes
             %% ================
 
-            {"/chunk/:index", file_rest_handler, get_chunk},
+            {"/file/:filename", file_rest_handler, file},
 
-            {"/file/:filename", file_rest_handler, read_file},
-            {"/file/new", file_rest_handler, new_file}
+            %% =================
+            %% Chunk routes
+            %% =================
+
+            {"/chunk/:filename/:index", chunk_rest_handler, get_chunk}
         ]}
     ]),
 

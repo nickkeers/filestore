@@ -223,7 +223,7 @@ all_entries_for_filename(Filename) ->
 %% @doc
 %% Delete the entries for the given key
 %% @end
--spec delete(Key :: iodata()) -> ok | {error, term()}.
+-spec delete(Key :: any()) -> ok | {error, term()}.
 delete(Key) ->
     gen_server:call(?MODULE, {delete, Key}).
 
@@ -233,3 +233,7 @@ delete(Key) ->
 -spec reset() -> ok.
 reset() ->
     gen_server:call(?MODULE, reset).
+
+-spec exists(Key :: any()) -> boolean().
+exists(Key) ->
+    gen_server:call(?MODULE, {exists, Key}).
