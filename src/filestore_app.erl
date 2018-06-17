@@ -34,7 +34,7 @@ start(_StartType, _StartArgs) ->
             %% Chunk routes
             %% =================
 
-            {"/chunk/:filename/:index", chunk_rest_handler, get_chunk}
+            {"/chunk/:filename/:index", chunk_rest_handler, read_chunk}
         ]}
     ]),
 

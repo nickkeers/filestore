@@ -86,3 +86,12 @@ fetch_body(Req0, Acc) ->
         {more, Data, Req} ->
             fetch_body(Req, <<Acc/binary, Data/binary>>)
     end.
+
+%%multipart(Req0) ->
+%%    case cowboy_req:read_part(Req0) of
+%%        {ok, _Headers, Req1} ->
+%%            {ok, _Body, Req} = cowboy_req:read_part_body(Req1),
+%%            multipart(Req);
+%%        {done, Req} ->
+%%            Req
+%%    end.

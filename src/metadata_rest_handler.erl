@@ -40,10 +40,11 @@ do_route(Req, Op) ->
 % /metadata
 -spec get_metadata(cowboy_req:req()) -> route_return().
 get_metadata(Req) ->
-    case store:get_all_chunk_entries() of
-        {error, _Reason} ->
-            {?JSON_ERROR(<<"Error, no filename given">>), Req, 404};
-        Result ->
+    Result = store:get_all_chunk_entries(),
+    case maps:size(Result)  of
+        0 ->
+            {?JSON_ERROR(<<"Error, no data found">>), Req, 404};
+        _ ->
             {Result, Req, 200}
     end.
 
@@ -57,6 +58,7 @@ get_file(Req) ->
         _ ->
             % {{iodata(), integer()}, integer()}
             Result = store:entries_for_filename(Filename),
+            ct:pal("Result for ~p: ~p", [Filename, Result]),
             encode_entries(Result, Req)
     end.
 
@@ -66,7 +68,7 @@ get_all_meta(Req) ->
     Filename = cowboy_req:binding(filename, Req),
     case Filename of
         undefined ->
-            {?JSON_ERROR(<<"Error, no entries for given filename">>), Req, 404};
+            {?JSON_ERROR(<<"Error, no entries for filename">>), Req, 404};
         _ ->
             Result = store:all_entries_for_filename(Filename),
             encode_entries(Result, Req)
@@ -80,12 +82,17 @@ get_all_meta(Req) ->
 encode_entries({error, _}, Req) ->
     {?JSON_ERROR(<<"Error, no entries for filename">>), Req, 404};
 encode_entries(Entries, Req) ->
-    Result =
-        lists:foldl(fun({{Filename, Index}, Checksum}, Acc) ->
-            BIndex = integer_to_binary(Index),
-            maps:update_with(Filename,
-                fun(Indexes) ->
-                    maps:put(BIndex, #{checksum => Checksum}, Indexes)
-                end, #{BIndex => #{checksum => Checksum}}, Acc)
-                    end, #{}, Entries),
-    {Result, Req, 200}.
+    case length(Entries) of
+        0 ->
+            {?JSON_ERROR(<<"Error, no entres for filename">>), Req, 404};
+        _ ->
+            Result =
+                lists:foldl(fun({{Filename, Index}, Checksum}, Acc) ->
+                    BIndex = integer_to_binary(Index),
+                    maps:update_with(Filename,
+                        fun(Indexes) ->
+                            maps:put(BIndex, #{checksum => Checksum}, Indexes)
+                        end, #{BIndex => #{checksum => Checksum}}, Acc)
+                            end, #{}, Entries),
+            {Result, Req, 200}
+    end.

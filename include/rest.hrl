@@ -1,4 +1,4 @@
--define(JSON_HEADER, #{<<"Content-Type">> => <<"application/json">>}).
+-define(JSON_HEADER, #{<<"Content-Type">> => <<"application/json; charset=utf-8">>}).
 -define(JSON_ERROR(Error), #{error => Error}).
 
 -export_type([route_return/0]).

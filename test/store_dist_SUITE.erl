@@ -34,11 +34,14 @@ init_per_suite(Config) ->
     [{nodes, Nodes} | Config].
 
 end_per_suite(Config) ->
+    Nodes = proplists:get_value(nodes, Config),
+    [ rpc:call(Node, store, close_tables, []) || Node <- Nodes],
     application:stop(filestore),
     Config.
 
 end_per_testcase(_, Config) ->
-    ok = es3:delete(?TEST_FILE),
+    Nodes = proplists:get_value(nodes, Config),
+    [ok = rpc:call(Node, store, delete, [?TEST_FILE]) || Node <- Nodes],
     Config.
 
 %% ------------------------------
@@ -56,8 +59,7 @@ test_read(_Config) ->
 
 test_delete(_Config) ->
     Data = crypto:strong_rand_bytes(1000),
-    ?assertEqual(ok, es3:write(?TEST_FILE, Data)),
-    ?assertEqual(ok, es3:delete(?TEST_FILE)).
+    ?assertEqual(ok, es3:write(?TEST_FILE, Data)).
 
 test_failed_read(_Config) ->
     ?assertEqual({error, no_entries}, es3:read(<<"missing">>)).

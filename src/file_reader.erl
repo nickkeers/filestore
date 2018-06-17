@@ -16,31 +16,48 @@ start_link(Filename, Parent) ->
 reader(Filename, Parent, Self) ->
     ThisPid = self(),
     proc_lib:init_ack(Self, {ok, ThisPid}),
-    Metadata = store:all_entries_for_filename(Filename),
 
-    HowMany = lists:foldl(fun({error, _}, Acc) ->
-                                 Acc;
-                             ({_Node, Entries}, Acc) ->
-                                 Acc + length(Entries)
-                          end, 0, Metadata),
+    % Multi-calls to every node to check if we have the file store yet
+    {Replies, _} = store:exists(Filename),
+    {Nodes, _} = lists:unzip(Replies),
 
-    [spawn(?MODULE, read_node_chunks, [ThisPid, Node, Key]) || {Node, Key} <- Metadata],
+    case lists:any(fun({_, X}) -> X == true  end, Replies) of
+        false ->
+            Parent ! {error, exists};
+        true ->
+            % [{Node, Entries} ... {NodeN, EntriesN}]
+            Metadata = store:all_entries_for_filename(Filename),
 
-    Results = wait_for_results(0, HowMany, []),
-    Parent ! reassemble(Results),
+            HowMany = lists:foldl(fun({error, _}, Acc) ->
+                                         Acc;
+                                     ({_Node, Entries}, Acc) ->
+                                         Acc + length(Entries)
+                                  end, 0, Metadata),
+
+            [spawn(?MODULE, read_node_chunks, [ThisPid, Node, Keys]) || {Node, Keys} <- Metadata, lists:member(Node, Nodes)],
+
+            Results = wait_for_results(0, HowMany, []),
+            Parent ! reassemble(Results)
+    end,
     ok.
 
 -spec read_node_chunks(pid(), node(), [{iodata(), non_neg_integer()}]) -> ok.
 read_node_chunks(Collector, _, {error, Rsn} = ER) ->
     io:format("Error reading chunk: ~p~n", [Rsn]),
     Collector ! ER;
+read_node_chunks(CollectorPid, Node, Keys) when Node == node() ->
+    lists:foreach(fun({Key, _}) ->
+                    Chunk = es3_chunk:read(Key),
+                    CollectorPid ! {chunk, {Key, Chunk}}
+                  end, Keys);
 read_node_chunks(CollectorPid, Node, Keys) ->
-    lists:foreach(fun(Key) ->
-        Chunk = gen_server:call({store, Node}, {read_chunk, Key}),
-        CollectorPid ! {chunk, {Key, Chunk}}
-    end, Keys).
+    lists:foreach(fun({ Key, _}) ->
+        Chunk = rpc:call(Node, es3_chunk, read, [Key]),
 
--spec wait_for_results(non_neg_integer(),number(),[{{iodata(), non_neg_integer()}, binary()}]) -> [{iodata(), non_neg_integer()}] | {'error','missing_chunk' | 'timeout'}.
+        CollectorPid ! {chunk, {Key, Chunk}}
+                  end, Keys).
+
+-spec wait_for_results(non_neg_integer(), number(), [{{iodata(), non_neg_integer()}, binary()}]) -> [{iodata(), non_neg_integer()}] | {'error', 'missing_chunk' | 'timeout'}.
 wait_for_results(Collected, Total, Acc) when Collected == Total ->
     Acc;
 wait_for_results(Collected, Total, Acc) ->
@@ -48,20 +65,19 @@ wait_for_results(Collected, Total, Acc) ->
         {chunk, {_, {error, _}}} ->
             {error, missing_chunk};
         {chunk, {Key, Chunk}} ->
-            wait_for_results(Collected +1, Total, [{Key, Chunk} | Acc])
+            wait_for_results(Collected + 1, Total, [{Key, Chunk} | Acc])
     after 5000 ->
         {error, timeout}
     end.
 
--spec reassemble([{binary() | maybe_improper_list(iodata(),binary() | []), non_neg_integer()}] | {'error','missing_chunk' | 'timeout'}) -> {'error','missing_chunk' | 'timeout'} | {'results',<<>>}.
+-spec reassemble([{binary() | maybe_improper_list(iodata(), binary() | []), non_neg_integer()}] | {'error', 'missing_chunk' | 'timeout'}) -> {'error', 'missing_chunk' | 'timeout'} | {'results', <<>>}.
 reassemble({error, Reason}) ->
     {error, Reason};
 reassemble(Chunks) ->
     Sorted = lists:sort(fun({{_Filename, Index}, _Chunk}, {{_Filename2, Index2}, _Chunk2}) ->
         Index =< Index2
                         end, Chunks),
-    io:format("Sorted chunks: ~p~n", [Sorted]),
     Res = lists:foldl(fun({_, Chunk}, Acc) ->
         <<Acc/binary, Chunk/binary>>
-                end, <<>>, Sorted),
+                      end, <<>>, Sorted),
     {results, Res}.

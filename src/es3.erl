@@ -68,6 +68,8 @@ read(Name) ->
             Results;
         {error, _Rsn} = Error ->
             Error
+    after 10000 ->
+        {error, timeout}
     end.
 
 -spec delete(Name) -> Res when

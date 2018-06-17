@@ -48,7 +48,7 @@ read_chunk(Req, <<"GET">>) ->
                 undefined ->
                     {?JSON_ERROR(<<"Error, chunk index not provided">>), Req, 400};
                 Index ->
-                    case es3_chunk:read({Filename, Index}) of
+                    case es3_chunk:read({Filename, binary_to_integer(Index)}) of
                         {error, _Reason} ->
                             {?JSON_ERROR(<<"Could not read chunk">>), Req, 404};
                         ChunkContents ->

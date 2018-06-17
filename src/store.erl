@@ -18,11 +18,13 @@
     write_to_peers/4,
     get_all_chunk_entries/0,
     read/1,
+    exists/1,
     read_chunk/1,
     delete/1,
     entries_for_filename/1,
     all_entries_for_filename/1,
-    reset/0
+    reset/0,
+    close_tables/0
 ]).
 
 -define(SERVER, ?MODULE).
@@ -52,25 +54,22 @@ write_to_peers(Filename, ChunkIndex, Chunk, Checksum) ->
 %% Return a list of unique chunks that the current node knows about, we can use this to rebuild state of other nodes,
 %% perform naive node repairs later if we need to - or present data via the REST API if needed
 %% @end
--spec get_all_chunk_entries() -> map() | {error, term()}.
+-spec get_all_chunk_entries() -> map().
 get_all_chunk_entries() ->
-    dets:foldl(fun({{Filename, Index}, Checksum}, Acc) ->
-        BIndex = integer_to_binary(Index),
-        maps:update_with(Filename,
-            fun(Indexes) ->
-                maps:put(BIndex, #{checksum => Checksum}, Indexes)
-            end, #{BIndex => #{checksum => Checksum}}, Acc)
-    end, #{}, metadata).
+    gen_server:call(?MODULE, get_all_chunk_entries).
 
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 
+metadata_tab_name() -> list_to_atom("metadata_" ++ atom_to_list(node())).
+chunks_tab_name() -> list_to_atom("chunks" ++ atom_to_list(node())).
+
 init([]) ->
     erlang:send_after(5000, self(), connect),
-    case dets:open_file(metadata, []) of
+    case dets:open_file(metadata_tab_name(), []) of
         {ok, DHandle} ->
-            case dets:open_file(chunks, []) of
+            case dets:open_file(chunks_tab_name(), []) of
                 {ok, ChunkHandle} ->
                     {ok, #state{meta_tab = DHandle, chunk_tab = ChunkHandle}};
                 {error, _} = E ->
@@ -87,9 +86,9 @@ handle_call({write, Filename, ChunkIndex, Chunk, Checksum}, _From, State = #stat
     % function depends on the previous function running successfully - not writing a function here because it would only
     % be used here
     Return =
-        case dets:insert_new(metadata, {{Filename, ChunkIndex}, Checksum}) of
+        case dets:insert_new(Table, {{Filename, ChunkIndex}, Checksum}) of
             true ->
-                case dets:insert_new(chunks, {{Filename, ChunkIndex}, Chunk}) of
+                case dets:insert_new(ChunkTab, {{Filename, ChunkIndex}, Chunk}) of
                     true ->
                         ok;
                     false ->
@@ -106,7 +105,7 @@ handle_call({write, Filename, ChunkIndex, Chunk, Checksum}, _From, State = #stat
 %% Read a metadata entry
 handle_call({read, Filename, ChunkIndex}, _From, State = #state{meta_tab = Table}) ->
     Reply =
-        case dets:lookup({Filename, ChunkIndex}, Table) of
+        case dets:lookup(Table, {Filename, ChunkIndex}) of
             [{{Filename, ChunkIndex}, _Checksum} = Row] ->
                 Row;
             _ ->
@@ -126,8 +125,21 @@ handle_call({entries, Filename}, _From, State = #state{meta_tab = Table}) ->
         case dets:select(Table, ?MATCH_SPEC(Filename)) of
             {error, _Reason} = Error ->
                 Error;
+            [] ->
+                {error, no_entries};
             Selection ->
                 Selection
+        end,
+    {reply, Reply, State};
+handle_call({exists, Filename}, _From, State = #state{meta_tab = Table}) ->
+    Reply =
+        case dets:select(Table, ?MATCH_SPEC(Filename)) of
+            {error, _Rsn} = Err ->
+                Err;
+            [] ->
+                false;
+            _Sel ->
+                true
         end,
     {reply, Reply, State};
 %% Delete all entries for the given key
@@ -139,6 +151,20 @@ handle_call(reset, _From, State = #state{meta_tab = MetaTab, chunk_tab = ChunkTa
     dets:delete_all_objects(MetaTab),
     dets:delete_all_objects(ChunkTab),
     {reply, ok, State};
+handle_call(close_tables, _From, State = #state{meta_tab = MetaTab, chunk_tab = ChunkTab}) ->
+    ok = dets:close(MetaTab),
+    ok = dets:close(ChunkTab),
+    {reply, ok, State};
+handle_call(get_all_chunk_entries, _From, State = #state{meta_tab = MetaTab}) ->
+    Result =
+        dets:foldl(fun({{Filename, Index}, Checksum}, Acc) ->
+            BIndex = integer_to_binary(Index),
+            maps:update_with(Filename,
+                fun(Indexes) ->
+                    maps:put(BIndex, #{checksum => Checksum}, Indexes)
+                end, #{BIndex => #{checksum => Checksum}}, Acc)
+                   end, #{}, MetaTab),
+    {reply, Result, State};
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
@@ -153,8 +179,9 @@ handle_info(connect, State) ->
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(_Reason, #state{meta_tab = DetsTab}) ->
+terminate(_Reason, #state{meta_tab = DetsTab, chunk_tab = ChunkTab}) ->
     dets:close(DetsTab),
+    dets:close(ChunkTab),
     ok.
 
 -spec(code_change(OldVsn :: term() | {down, term()}, State :: #state{},
@@ -188,6 +215,10 @@ write(Filename, ChunkIndex, Chunk, Checksum) ->
 read({Filename, ChunkIndex}) ->
     gen_server:call(?MODULE, {read, Filename, ChunkIndex}).
 
+-spec exists(Filename :: iodata()) -> {[{atom(), boolean() | {error, term()}}], [atom()]}.
+exists(Filename) ->
+    gen_server:multi_call([node()] ++ nodes(), ?MODULE, {exists, Filename}).
+
 %% @doc
 %% Read a single chunk from the chunks table, returns the row data for that chunk
 %% @end
@@ -205,7 +236,7 @@ entries_for_filename(Filename) ->
 %% @doc
 %% Get all the metadata entries across the nodes in the cluster for a filename
 %% @end
--spec all_entries_for_filename(iodata()) -> [metadata_row()].
+-spec all_entries_for_filename(iodata()) -> [{atom(), [metadata_row()]}].
 all_entries_for_filename(Filename) ->
     Remote = lists:map(fun(Node) ->
         Entries =
@@ -221,7 +252,7 @@ all_entries_for_filename(Filename) ->
         {error, no_entries} ->
             Remote;
         Local ->
-            Local ++ Remote
+            [{node(), Local}] ++ Remote
     end.
 
 %% @doc
@@ -237,3 +268,10 @@ delete(Key) ->
 -spec reset() -> ok.
 reset() ->
     gen_server:call(?MODULE, reset).
+
+%% @doc
+%% Close the two DETS tables
+%% @end
+-spec close_tables() -> ok.
+close_tables() ->
+    gen_server:call(?MODULE, close_tables).
